@@ -1,0 +1,45 @@
+{
+  "description": "Task Pointer lifecycle hooks; install.ps1 writes the user-specific command paths.",
+  "hooks": {
+    "PreCompact": [
+      {
+        "matcher": "^(manual|auto)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File <CODEX_HOME>/hooks/task-pointer-lifecycle.ps1",
+            "commandWindows": "pwsh -NoProfile -File <CODEX_HOME>\\hooks\\task-pointer-lifecycle.ps1",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "^(startup|resume|clear|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File <CODEX_HOME>/hooks/task-pointer-lifecycle.ps1",
+            "commandWindows": "pwsh -NoProfile -File <CODEX_HOME>\\hooks\\task-pointer-lifecycle.ps1",
+            "statusMessage": "Restoring task pointer",
+            "additionalContextLimit": 0,
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh -NoProfile -File <CODEX_HOME>/hooks/task-pointer-lifecycle.ps1",
+            "commandWindows": "pwsh -NoProfile -File <CODEX_HOME>\\hooks\\task-pointer-lifecycle.ps1",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

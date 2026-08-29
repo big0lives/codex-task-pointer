@@ -1,0 +1,18 @@
+# 本地运行产生的状态、备份和临时回执
+state/
+task-pointer-install-backups/
+*.tmp
+*.out
+*.err
+*.receipt.json
+
+# 本地编辑器和 PowerShell 生成物
+.vscode/
+*.swp
+
+# 把仓库根误用为隔离 CODEX_HOME 时的宿主运行产物
+/installation_id
+/*_*.sqlite
+/*_*.sqlite-shm
+/*_*.sqlite-wal
+/skills/

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/codex-task-pointer/publish-request-v3.schema.json",
+  "title": "Codex Task Pointer publish request v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "session_id",
+    "expected_generation",
+    "expected_revision",
+    "task_id",
+    "target_status",
+    "pointer_text"
+  ],
+  "properties": {
+    "schema_version": { "const": 3 },
+    "session_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "expected_generation": {
+      "type": "string",
+      "pattern": "^(ABSENT|LEGACY_V2|g-[0-9a-f]{32})$"
+    },
+    "expected_revision": { "type": "integer", "minimum": 0 },
+    "task_id": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "target_status": { "enum": ["CLEAN", "CLEARED"] },
+    "pointer_text": { "type": ["string", "null"], "minLength": 1 }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "target_status": { "const": "CLEARED" } } },
+      "then": {
+        "properties": {
+          "task_id": { "type": "null" },
+          "pointer_text": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "target_status": { "const": "CLEAN" } } },
+      "then": {
+        "properties": {
+          "task_id": { "type": "string" },
+          "pointer_text": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  ]
+}

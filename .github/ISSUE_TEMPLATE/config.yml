@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Codex 宿主问题
+    url: https://github.com/openai/codex/issues
+    description: Codex 宿主本身的行为（Hook 信任审阅、app-server 协议、模型与认证）请反馈到上游仓库。
