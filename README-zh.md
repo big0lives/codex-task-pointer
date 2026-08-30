@@ -231,8 +231,18 @@ codex-task-pointer/
 3. 跑门禁：`pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer` 与 `pwsh -NoProfile -File .\scripts\validate-public-tree.ps1`
 4. 提交 Pull Request 并附上收据输出
 
+流程细节见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请通过 [SECURITY.md](SECURITY.md) 的私密通道报告，不要开公开 issue。
+
 保持公开树脱敏：提交中不出现个人路径、凭据、会话数据和指针正文。
+
+## 路线图
+
+- GitHub Actions CI：每个 PR 自动运行验证门（`run-all.ps1 -SkipAppServer`）与公开树脱敏门
+- 评估非 Windows（macOS / Linux）安装路径——publisher 请求已包含可移植 `command` 字段
+- Codex 桌面端的 Hook 信任流程文档
 
 ## 许可证
 
 [MIT](LICENSE)
+
+维护者：[@big0lives](https://github.com/big0lives)

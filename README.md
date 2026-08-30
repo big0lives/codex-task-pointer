@@ -232,8 +232,18 @@ codex-task-pointer/
 3. Run the gates: `pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer` and `pwsh -NoProfile -File .\scripts\validate-public-tree.ps1`
 4. Open a Pull Request with the receipt outputs attached
 
+Workflow details: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go through the private channel in [SECURITY.md](SECURITY.md) — never a public issue.
+
 Keep the tree sanitization-clean: no personal paths, credentials, session data or pointer contents in commits.
+
+## Roadmap
+
+- GitHub Actions CI: every pull request runs the verification gates (`run-all.ps1 -SkipAppServer`) and the public-tree sanitization gate
+- Evaluate a non-Windows (macOS / Linux) install path — the publisher request already carries a portable `command` field
+- Hook trust flow documentation for the Codex desktop app
 
 ## License
 
 [MIT](LICENSE)
+
+Maintained by [@big0lives](https://github.com/big0lives)
