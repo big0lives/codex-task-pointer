@@ -68,7 +68,7 @@ The agent performs clone, self-check, install preview and apply on its own, and 
 Clone and self-check (the tests only write to the system temp directory):
 
 ```powershell
-git clone https://github.com/<owner>/codex-task-pointer.git
+git clone https://github.com/big0lives/codex-task-pointer.git
 cd codex-task-pointer
 
 pwsh -NoProfile -File .\tests\Test-TaskPointerLifecycle.ps1   # expect failed=0

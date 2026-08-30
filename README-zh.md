@@ -67,7 +67,7 @@ agent 会自主完成 clone、自检、安装预览和应用，并在最后提�
 克隆仓库并自检（测试只写系统临时目录，不影响本机配置）：
 
 ```powershell
-git clone https://github.com/<owner>/codex-task-pointer.git
+git clone https://github.com/big0lives/codex-task-pointer.git
 cd codex-task-pointer
 
 pwsh -NoProfile -File .\tests\Test-TaskPointerLifecycle.ps1   # 期望 failed=0
