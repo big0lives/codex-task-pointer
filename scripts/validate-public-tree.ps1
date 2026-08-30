@@ -190,6 +190,7 @@ try {
         '.github/PULL_REQUEST_TEMPLATE.md',
         '.gitattributes',
         '.gitignore',
+        'AGENTS.md',
         'CHANGELOG.md',
         'LICENSE',
         'NOTICE.md',
