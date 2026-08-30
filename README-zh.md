@@ -7,15 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="#快速开始"><img src="https://img.shields.io/badge/快速开始-4CAF50?style=for-the-badge" alt="Quick Start" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License" /></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white" alt="PowerShell" />
-  <img src="https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white" alt="Windows" />
-  <img src="https://img.shields.io/badge/For_Codex_CLI-000000?style=flat&logo=openai&logoColor=white" alt="Codex CLI" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="MIT" />
+  <a href="https://github.com/openai/codex"><img src="https://img.shields.io/badge/Codex-000000?style=flat&logo=openai&logoColor=white" alt="Codex" /></a>
 </p>
 
 <p align="center">
@@ -52,7 +44,7 @@ Codex 跑长目标时总是悄悄坏掉：自动压缩把计划吞掉，下一�
 
 ### 前置要求
 
-- Windows + PowerShell 7.5+（`pwsh --version`）
+- Windows + PowerShell **7.5+**（`pwsh --version`）——JSON 解析使用 `ConvertFrom-Json -DateKind`（7.5 起提供的参数），保证 ISO 日期字符串保持为字符串、不被自动转成日期对象
 - 已安装 Codex CLI（`codex --version`）
 - Node.js 18+ 仅在运行可选探针 / E2E harness 时需要
 

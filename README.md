@@ -7,15 +7,7 @@
 </p>
 
 <p align="center">
-  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-4CAF50?style=for-the-badge" alt="Quick Start" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License" /></a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/PowerShell-5391FE?style=flat&logo=powershell&logoColor=white" alt="PowerShell" />
-  <img src="https://img.shields.io/badge/Windows-0078D6?style=flat&logo=windows&logoColor=white" alt="Windows" />
-  <img src="https://img.shields.io/badge/For_Codex_CLI-000000?style=flat&logo=openai&logoColor=white" alt="Codex CLI" />
-  <img src="https://img.shields.io/badge/License-MIT-yellow?style=flat" alt="MIT" />
+  <a href="https://github.com/openai/codex"><img src="https://img.shields.io/badge/Codex-000000?style=flat&logo=openai&logoColor=white" alt="Codex" /></a>
 </p>
 
 <p align="center">
@@ -52,7 +44,7 @@ Built over a week of late nights, agent-assisted end to end. I run it on every l
 
 ### Prerequisites
 
-- Windows with PowerShell 7.5+ (`pwsh --version`)
+- Windows with PowerShell **7.5+** (`pwsh --version`) — the JSON layer uses `ConvertFrom-Json -DateKind`, a parameter added in 7.5, so ISO date strings are kept as strings instead of being auto-converted
 - Codex CLI installed (`codex --version`)
 - Node.js 18+ only for the optional probe / E2E harness
 

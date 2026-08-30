@@ -2,7 +2,7 @@
 
 ## 前提
 
-- PowerShell 7.5 或更高版本（脚本带 `#requires -Version 7.5`）。
+- PowerShell 7.5 或更高版本（脚本带 `#requires -Version 7.5`；JSON 解析使用 7.5 起提供的 `ConvertFrom-Json -DateKind`，保证日期字符串不被自动转换）。
 - 一个可写的绝对 `CODEX_HOME`；可以通过参数传入，也可以使用环境变量 `CODEX_HOME`。
 - 宿主应用支持 `hooks.json` 中的 command Hook，并允许用户在 Hook 管理界面审阅和信任命令。
 

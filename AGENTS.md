@@ -25,7 +25,7 @@ Task Pointer 是独立的本地任务指针运行时：把当前任务的最小�
 # 操作系统：本仓库安装流程面向 Windows
 $env:OS                          # 期望 Windows_NT
 
-# PowerShell ≥ 7.5
+# PowerShell ≥ 7.5（JSON 层使用 7.5 起提供的 ConvertFrom-Json -DateKind）
 pwsh -NoProfile -Command '$PSVersionTable.PSVersion.ToString()'
 
 # Codex CLI 已安装
