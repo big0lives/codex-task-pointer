@@ -195,6 +195,7 @@ try {
         'LICENSE',
         'NOTICE.md',
         'README.md',
+        'README-zh.md',
         'docs/architecture.md',
         'docs/installation-windows.md',
         'docs/migration.md',
