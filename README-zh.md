@@ -24,6 +24,9 @@ Codex 在中长任务或长时间 goal 执行中，自动压缩上下文可能�
 - 🧭 **主线在压缩后存活** — Codex 自动或手动压缩时，`SessionStart(compact)` Hook 把"目标 + 下一步"重新注入新上下文，模型重新锚定，避免漂移。
 - ♻️ **不重复已完成的工作** — 指针是 agent 自己显式发布的"目标 + 下一步"，压缩后的回合接着真实计划走，而不是在失真节点继续。
 - ⚛️ **CAS 保护的写入** — 每次发布都携带 `generation` + `revision`；过期写入直接失败（`STALE_GENERATION` / `STALE_REVISION`），清除会轮换 generation，旧请求无法复活旧状态。
+- ⏱️ **陈旧度与原地踏步可见** — 每次 `UserPromptSubmit` 注入 `POINTER_AGE_SECONDS` 与 `JOURNAL_IDENTICAL_TEXT_STREAK`，以及 `NEXT_ACTION` 建议；指针多老、agent 是否在反复发布同一份正文，都写在上下文里。状态没变时 Hook 不改写 `state.json`、不递增 `revision`，因此"年龄"反映的是真实的内容变更时间。
+- 📜 **只追加的发布日志** — 每次发布与清除都在同目录的 `journal.jsonl` 追加一条只含元数据与 SHA-256 的记录（正文永不写入日志），所以"指针是什么时候被清掉的、清掉的是哪一个"有迹可查。日志是审计侧车：追加失败也不阻塞发布，回执会带 `journal_appended=false`。
+- 🔎 **只读诊断入口** — [`src/task-pointer-report.ps1`](src/task-pointer-report.ps1) 随时可查状态、`revision`、年龄、日志深度与最近十条发布记录；`-Recall` 按 `revision` 检索历史。
 - 🔒 **严格 IO，默认拒绝** — stdin JSON 仅接受严格 UTF-8、固定字段集合、拒绝重复字段；按 session 互斥，原子写入并读回校验。
 - 🪟 **带回滚的 Windows 安装器** — `-WhatIf` 预览、owned 文件备份、原子合并 `hooks.json` 且保留你的其他 Hook、显式 `-Rollback`。
 - 🤖 **交给 agent 部署** — [AGENTS.md](AGENTS.md) 是完整的部署 playbook：把仓库链接发给你的 agent，它能自主安装、验证和调试，只在真正需要人的地方询问你。
@@ -121,13 +124,14 @@ pwsh -NoProfile -File .\scripts\install.ps1 -CodexHome $env:CODEX_HOME -Rollback
 ### 流程图
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px', 'lineColor': '#9CA3AF', 'defaultLinkColor': '#9CA3AF', 'arrowheadColor': '#9CA3AF'}}}%%
 flowchart TD
     A[SessionStart Hook] -->|注入指针参照| B[Agent 继续做任务]
     B -->|用户发送下一条 prompt| C[UserPromptSubmit Hook]
     C -->|标 DIRTY + 返回 CAS 基础| D[Agent 发布新指针]
     D --> E[publisher：CAS 校验 + 原子写入]
     E --> F[（每个会话一份 state.json）]
+    F --> K[（每会话一份 journal.jsonl：发布历史的只追加元数据）]
     B --> G{触发自动 / 手动压缩？}
     G -->|是| H[PreCompact Hook：确认指针已持久化]
     H --> I[压缩后上下文丢失细节]
@@ -144,7 +148,10 @@ flowchart TD
     class A,J start
     class B,C,D,E,H,I process
     class G decision
-    class F storage
+    class F,K storage
+
+    %% 连线统一为灰色，避免彩色连线与节点配色互相争夺注意力。
+    linkStyle default stroke:#9CA3AF,stroke-width:1px
 ```
 
 ### 三个 Hook 事件
@@ -173,7 +180,7 @@ Hook 注入的上下文包含 publisher 路径、请求 schema 和当前 CAS 基
 
 CAS 规则：`expected_generation` / `expected_revision` 与磁盘状态不一致时返回 `STALE_GENERATION` / `STALE_REVISION`（退出码 2，state 保持不变）；清除指针会轮换 generation，旧请求无法复活旧状态。
 
-完整字段规则见 [docs/protocol.md](docs/protocol.md)；安全边界见 [docs/security.md](docs/security.md)；磁盘上存在旧版本（v1）记录时，先用[迁移器](docs/migration.md)做只读预览，确认后再显式 `-Apply`。
+完整字段规则见 [docs/protocol.md](docs/protocol.md)；安全边界见 [docs/security.md](docs/security.md)；设计取舍、借鉴自其它上下文工具的机制与明确不做的事见 [docs/design.md](docs/design.md)；磁盘上存在旧版本（v1）记录时，先用[迁移器](docs/migration.md)做只读预览，确认后再显式 `-Apply`。
 
 ## 配置
 
@@ -200,9 +207,10 @@ CAS 规则：`expected_generation` / `expected_revision` 与磁盘状态不一�
 codex-task-pointer/
 ├── AGENTS.md                      # 面向用户 agent 的部署 playbook
 ├── src/
-│   ├── task-pointer-store.ps1     # 路径、schema 校验、互斥、原子写、CAS
+│   ├── task-pointer-store.ps1     # 路径、schema 校验、互斥、原子写、CAS、日志
 │   ├── task-pointer-lifecycle.ps1 # Hook stdin 事件 -> state 变更 / 恢复上下文
-│   └── task-pointer-publish.ps1   # stdin JSON 请求 -> CAS 发布
+│   ├── task-pointer-publish.ps1   # stdin JSON 请求 -> CAS 发布
+│   └── task-pointer-report.ps1    # 只读状态 / 日志报告（-Recall 检索历史）
 ├── hooks/
 │   └── hooks.example.json         # 可移植 Hook 定义模板
 ├── schemas/                       # state-v3 + publish-request-v3 JSON Schema
@@ -210,9 +218,9 @@ codex-task-pointer/
 │   ├── install.ps1                # 预览 / 应用 / 回滚安装器
 │   ├── migrate-v1-to-v3.ps1       # v1 记录 -> state v3（默认只读预览）
 │   └── validate-public-tree.ps1   # 脱敏门：allowlist、敏感信息、链接
-├── tests/                         # 35 用例生命周期套件、安装 smoke、app-server harness
-├── docs/                          # 架构 / 协议 / 安装 / 迁移 / 安全
-└── .github/                       # issue 与 PR 模板
+├── tests/                         # 48 用例生命周期套件、安装 smoke、app-server harness
+├── docs/                          # 架构 / 协议 / 设计 / 安装 / 迁移 / 安全
+└── .github/                       # issue 与 PR 模板、CI workflow（Windows + pwsh 门禁）
 ```
 
 ## 技术栈
@@ -231,15 +239,17 @@ codex-task-pointer/
 3. 跑门禁：`pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer` 与 `pwsh -NoProfile -File .\scripts\validate-public-tree.ps1`
 4. 提交 Pull Request 并附上收据输出
 
+CI 会在每个 PR 上用 `windows-latest` 跑同一套门（见 `.github/workflows/ci.yml`），本地全绿即是检查结论。
+
 流程细节见 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题请通过 [SECURITY.md](SECURITY.md) 的私密通道报告，不要开公开 issue。
 
 保持公开树脱敏：提交中不出现个人路径、凭据、会话数据和指针正文。
 
 ## 路线图
 
-- GitHub Actions CI：每个 PR 自动运行验证门（`run-all.ps1 -SkipAppServer`）与公开树脱敏门
 - 评估非 Windows（macOS / Linux）安装路径——publisher 请求已包含可移植 `command` 字段
 - Codex 桌面端的 Hook 信任流程文档
+- 可选的追加日志完整性清单（目前按设计只存元数据）
 
 ## 许可证
 

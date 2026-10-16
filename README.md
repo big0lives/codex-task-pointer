@@ -24,6 +24,9 @@ On mid-length tasks and long goal runs, Codex auto-compaction can wipe key miles
 - 🧭 **Mainline survives compaction** — when Codex compacts (auto or manual), the `SessionStart(compact)` hook re-injects your "goal + next step" into the fresh context, so the model re-anchors instead of drifting.
 - ♻️ **No redoing finished work** — the pointer is an explicit "goal + next step" your agent publishes itself, so the post-compaction turn follows the real plan instead of continuing from a distorted node.
 - ⚛️ **CAS-guarded writes** — every publish carries `generation` + `revision`. Stale writes fail loudly (`STALE_GENERATION` / `STALE_REVISION`), and clearing rotates the generation so an old request can't resurrect state.
+- ⏱️ **Staleness and standstill are visible** — every `UserPromptSubmit` injects `POINTER_AGE_SECONDS`, `JOURNAL_IDENTICAL_TEXT_STREAK` and a `NEXT_ACTION` hint, so "how old is this pointer" and "is the agent republishing the same text" are in context. When nothing changed the hook does not rewrite `state.json` or bump `revision`, so the age reflects the last real content change.
+- 📜 **Append-only publish journal** — each publish and clear appends one metadata-only record (plus SHA-256) to `journal.jsonl` next to the state file; pointer text is never written to the journal. So "when was the pointer cleared, and which one was it" stays answerable. The journal is an audit sidecar: a failed append never blocks a publish, and the receipt reports `journal_appended=false`.
+- 🔎 **Read-only diagnostics** — [`src/task-pointer-report.ps1`](src/task-pointer-report.ps1) prints status, `revision`, pointer age, journal depth and the last ten publish records at any time; `-Recall` looks up a historical revision.
 - 🔒 **Strict IO, fail closed** — UTF-8-only stdin JSON, fixed field sets, duplicate-key rejection, per-session mutex, atomic write with read-back verification.
 - 🪟 **Windows installer with a rollback path** — `-WhatIf` preview, owned-file backup, atomic `hooks.json` merge that preserves your other hooks, explicit `-Rollback`.
 - 🤖 **Delegate deployment to your agent** — [AGENTS.md](AGENTS.md) is a complete deployment playbook: send your agent the repo link and it installs, verifies and debugs on its own, asking you only where a human is actually required.
@@ -122,13 +125,14 @@ The pointer is persisted during task execution, not at compaction time:
 ### Flow
 
 ```mermaid
-%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px'}}}%%
+%%{init: {'theme': 'base', 'themeVariables': {'fontSize': '14px', 'lineColor': '#9CA3AF', 'defaultLinkColor': '#9CA3AF', 'arrowheadColor': '#9CA3AF'}}}%%
 flowchart TD
     A[SessionStart hook] -->|inject pointer context| B[Agent works on the task]
     B -->|user sends next prompt| C[UserPromptSubmit hook]
     C -->|mark DIRTY + return CAS base| D[Agent publishes new pointer]
     D --> E[publisher: CAS check + atomic write]
     E --> F[(state.json per session)]
+    F --> K[(journal.jsonl per session: append-only publish history)]
     B --> G{Auto / manual compact?}
     G -->|yes| H[PreCompact hook: confirm pointer durable]
     H --> I[Compaction loses conversation detail]
@@ -145,7 +149,10 @@ flowchart TD
     class A,J start
     class B,C,D,E,H,I process
     class G decision
-    class F storage
+    class F,K storage
+
+    %% All links are gray so the colored nodes keep the focus.
+    linkStyle default stroke:#9CA3AF,stroke-width:1px
 ```
 
 ### The three hook events
@@ -174,7 +181,7 @@ The hook-injected context contains the publisher path, the request schema and th
 
 CAS rules: a `expected_generation` / `expected_revision` mismatch with the on-disk state returns `STALE_GENERATION` / `STALE_REVISION` (exit code 2, state untouched); clearing rotates the generation so stale requests cannot resurrect old state.
 
-Full field rules: [docs/protocol.md](docs/protocol.md). Security boundaries: [docs/security.md](docs/security.md). If old-version (v1) records exist on disk, preview them with the [migrator](docs/migration.md) first and only then apply with `-Apply`.
+Full field rules: [docs/protocol.md](docs/protocol.md). Security boundaries: [docs/security.md](docs/security.md). Design rationale, the borrowings from other context tools and the explicit non-goals: [docs/design.md](docs/design.md). If old-version (v1) records exist on disk, preview them with the [migrator](docs/migration.md) first and only then apply with `-Apply`.
 
 ## Configuration
 
@@ -201,9 +208,10 @@ Full field rules: [docs/protocol.md](docs/protocol.md). Security boundaries: [do
 codex-task-pointer/
 ├── AGENTS.md                     # deployment playbook for user agents
 ├── src/
-│   ├── task-pointer-store.ps1    # paths, schema checks, mutex, atomic writes, CAS
+│   ├── task-pointer-store.ps1    # paths, schema checks, mutex, atomic writes, CAS, journal
 │   ├── task-pointer-lifecycle.ps1# hook stdin events -> state changes / context
-│   └── task-pointer-publish.ps1  # stdin JSON request -> CAS publish
+│   ├── task-pointer-publish.ps1  # stdin JSON request -> CAS publish
+│   └── task-pointer-report.ps1   # read-only status / journal report (-Recall for history)
 ├── hooks/
 │   └── hooks.example.json        # portable hook definition template
 ├── schemas/                      # state-v3 + publish-request-v3 JSON Schema
@@ -211,9 +219,9 @@ codex-task-pointer/
 │   ├── install.ps1               # preview / apply / rollback installer
 │   ├── migrate-v1-to-v3.ps1      # v1 records -> state v3 (dry run by default)
 │   └── validate-public-tree.ps1  # sanitization gate: allowlist, secrets, links
-├── tests/                        # 35-case lifecycle suite, install smoke, app-server harnesses
-├── docs/                         # architecture / protocol / install / migration / security
-└── .github/                      # issue and PR templates
+├── tests/                        # 48-case lifecycle suite, install smoke, app-server harnesses
+├── docs/                         # architecture / protocol / design / install / migration / security
+└── .github/                      # issue and PR templates, CI workflow (Windows + pwsh gates)
 ```
 
 ## Tech Stack
@@ -232,15 +240,17 @@ codex-task-pointer/
 3. Run the gates: `pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer` and `pwsh -NoProfile -File .\scripts\validate-public-tree.ps1`
 4. Open a Pull Request with the receipt outputs attached
 
+CI runs the same gates on `windows-latest` for every pull request (see `.github/workflows/ci.yml`), so a green local run is what the check will report.
+
 Workflow details: [CONTRIBUTING.md](CONTRIBUTING.md). Security reports go through the private channel in [SECURITY.md](SECURITY.md) — never a public issue.
 
 Keep the tree sanitization-clean: no personal paths, credentials, session data or pointer contents in commits.
 
 ## Roadmap
 
-- GitHub Actions CI: every pull request runs the verification gates (`run-all.ps1 -SkipAppServer`) and the public-tree sanitization gate
 - Evaluate a non-Windows (macOS / Linux) install path — the publisher request already carries a portable `command` field
 - Hook trust flow documentation for the Codex desktop app
+- Optional integrity manifest for the append-only journal (currently metadata-only by design)
 
 ## License
 

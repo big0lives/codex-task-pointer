@@ -71,10 +71,12 @@ try {
     switch ($eventName) {
         'UserPromptSubmit' {
             $result = Set-TPV2Dirty -StateRoot $root -SessionId $session
-            $context = if ([bool]$result.changed) {
-                Format-TPV2CasContext -SessionId $session -Status ([string]$result.status) -Generation ([string]$result.generation) -Revision ([int64]$result.revision)
-            } else {
+            # 无指针可续（首次或刚被清除）才发 bootstrap；其余一律发 CAS 基础。DIRTY 上的 no-op
+            # 重标记走这里而不是 bootstrap 分支，CAS 产物在 revision 不变时逐字节相同。
+            $context = if ([bool]$result.bootstrap) {
                 Format-TPV2BootstrapContext -SessionId $session -Source prompt -Status ([string]$result.status) -Generation ([string]$result.generation) -Revision ([int64]$result.revision)
+            } else {
+                Format-TPV2CasContext -SessionId $session -Status ([string]$result.status) -Generation ([string]$result.generation) -Revision ([int64]$result.revision) -AgeSeconds ([int]$result.age_seconds) -IdenticalTextStreak ([int]$result.identical_text_streak)
             }
             Write-AdditionalContext -EventName 'UserPromptSubmit' -Context $context
         }

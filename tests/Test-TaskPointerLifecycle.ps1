@@ -7,6 +7,7 @@ $script:Root = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:Publisher = Join-Path $script:Root 'src\task-pointer-publish.ps1'
 $script:Lifecycle = Join-Path $script:Root 'src\task-pointer-lifecycle.ps1'
 $script:Store = Join-Path $script:Root 'src\task-pointer-store.ps1'
+$script:Report = Join-Path $script:Root 'src\task-pointer-report.ps1'
 $script:Migration = Join-Path $script:Root 'scripts\migrate-v1-to-v3.ps1'
 $script:Passed = 0
 $script:Failed = 0
@@ -245,6 +246,38 @@ function Publish-Clean {
     return Invoke-Publisher -SessionId $SessionId -RequestJson $request -StateRoot $StateRoot
 }
 
+function Get-JournalPath {
+    param([string]$SessionId, [string]$StateRoot = $script:StateRoot)
+    return Get-TPV2JournalPath -StateRoot $StateRoot -SessionId $SessionId
+}
+
+function Get-JournalLines {
+    param([string]$SessionId, [string]$StateRoot = $script:StateRoot)
+    $path = Get-JournalPath -SessionId $SessionId -StateRoot $StateRoot
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return @() }
+    return @([IO.File]::ReadAllLines($path, $script:Utf8) | Where-Object { $_.Trim().Length -gt 0 })
+}
+
+function Get-JournalRecords {
+    param([string]$SessionId, [string]$StateRoot = $script:StateRoot)
+    $records = @()
+    foreach ($line in (Get-JournalLines -SessionId $SessionId -StateRoot $StateRoot)) {
+        try { $records += , ($line | ConvertFrom-Json -AsHashtable -Depth 20 -DateKind String) }
+        catch { }
+    }
+    return $records
+}
+
+function Get-JournalLast {
+    param([string]$SessionId, [string]$StateRoot = $script:StateRoot)
+    return @(Get-JournalRecords -SessionId $SessionId -StateRoot $StateRoot) | Select-Object -Last 1
+}
+
+function Get-JournalRaw {
+    param([string]$SessionId, [string]$StateRoot = $script:StateRoot)
+    return [IO.File]::ReadAllText((Get-JournalPath -SessionId $SessionId -StateRoot $StateRoot), $script:Utf8)
+}
+
 [System.IO.Directory]::CreateDirectory($script:TestRoot) | Out-Null
 try {
     Invoke-Case 'v2 store、publisher、lifecycle 与迁移器存在' {
@@ -272,9 +305,9 @@ try {
         Assert-Match '^g-[0-9a-f]{32}$' ([string]$state.generation) 'generation'
         Assert-Equal 'CLEAN' ([string]$state.status) 'status'
         Assert-Equal 1 ([int64]$state.revision) 'revision'
-        $files = @(Get-ChildItem -LiteralPath (Split-Path -Parent (Get-StatePath $session)) -File)
-        Assert-Equal 1 $files.Count 'single state file'
-        Assert-Equal 'state.json' $files[0].Name 'state name'
+        $files = @(Get-ChildItem -LiteralPath (Split-Path -Parent (Get-StatePath $session)) -File | Sort-Object Name)
+        Assert-Equal 2 $files.Count 'session directory holds state plus journal'
+        Assert-Equal 'journal.jsonl,state.json' (($files | ForEach-Object { $_.Name }) -join ',') 'session directory entries'
     }
 
     Invoke-Case 'UserPromptSubmit 原子标记 DIRTY 且 stale revision 被拒绝' {
@@ -298,7 +331,7 @@ try {
         Assert-Equal 'CLEAN' ([string](Read-State $session).status) 'clean restored'
     }
 
-    Invoke-Case '连续 prompt 只依赖 revision 且不会接受旧基础' {
+    Invoke-Case '连续 prompt 只标记一次 DIRTY 且不会接受旧基础' {
         $session = 'session-multi-prompt'
         Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'initial publish'
         1..3 | ForEach-Object {
@@ -306,10 +339,11 @@ try {
             Assert-Equal 0 $promptResult.ExitCode ("prompt $_ :: " + $promptResult.Text)
         }
         $state = Read-State $session
-        Assert-Equal 4 ([int64]$state.revision) 'revision after prompts'
+        # no-op 守卫：只有首次 prompt 是 CLEAN -> DIRTY 的实质转变，后两轮不再改写 state。
+        Assert-Equal 2 ([int64]$state.revision) 'revision after prompts'
         Assert-Equal 'DIRTY' ([string]$state.status) 'status after prompts'
-        Assert-Equal 2 (Publish-Clean -SessionId $session -ExpectedRevision 3).ExitCode 'old base rejected'
-        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 4).ExitCode 'current base accepted'
+        Assert-Equal 2 (Publish-Clean -SessionId $session -ExpectedRevision 1).ExitCode 'old base rejected'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 2).ExitCode 'current base accepted'
     }
 
     Invoke-Case 'PreCompact 保持单 state，SessionStart 注入 CLEAN 或 MERGE_FIRST' {
@@ -897,6 +931,188 @@ $mutex = [Threading.Mutex]::new($false, $Name)
         $numeric = Invoke-Lifecycle -Event (New-Event -Name SessionStart -SessionId $session -Variant resume)
         Assert-Equal 0 $numeric.ExitCode 'numeric session diagnostic exit'
         Assert-Match 'UNKNOWN_RECOVERY:STATE_SESSION_INVALID' $numeric.Text 'numeric session code'
+    }
+
+    Invoke-Case '发布后追加一条 journal 记录且不含指针正文' {
+        $session = 'journal-basic'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0 -PointerText "目标：甲`n下一步：乙").ExitCode 'first publish'
+        $records = @(Get-JournalRecords -SessionId $session)
+        Assert-Equal 1 $records.Count 'journal entry count'
+        $record = $records[0]
+        Assert-Equal 'CLEAN' $record.status 'journal status'
+        Assert-Equal 1 $record.revision 'journal revision'
+        Assert-Equal 'ABSENT' $(if ($null -eq $record.previous_status) { 'ABSENT' } else { [string]$record.previous_status }) 'journal previous status'
+        Assert-Equal 0 ([int64]$record.previous_revision) 'journal previous revision'
+        Assert-Equal 1 $record.journal_version 'journal version'
+        Assert-True ($record.task_id -ceq '11111111-1111-4111-8111-111111111111') 'journal task id'
+        Assert-Equal 64 ([string]$record.pointer_digest).Length 'journal digest length'
+        Assert-True ([string]$record.pointer_digest -cmatch '^[0-9a-f]{64}$') 'journal digest shape'
+        Assert-True ([int]$record.pointer_byte_count -gt 0) 'journal byte count positive'
+        Assert-True ([string]$record.recorded_at -cmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$') 'journal timestamp'
+        $raw = Get-JournalRaw -SessionId $session
+        Assert-True (-not $raw.Contains('下一步')) 'journal must not carry pointer text'
+        Assert-True (-not $raw.Contains('目标：甲')) 'journal must not carry pointer text'
+        Assert-Equal $script:Utf8.GetByteCount("目标：甲`n下一步：乙") ([int]$record.pointer_byte_count) 'journal byte count'
+    }
+
+    Invoke-Case '正文未变时摘要值稳定、正文变化时摘要值不同' {
+        $session = 'journal-digest'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0 -PointerText "目标：丙`n下一步：丁").ExitCode 'publish one'
+        $g1 = (Read-State -SessionId $session).generation
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 1 -PointerText "目标：丙`n下一步：丁").ExitCode 'publish two'
+        $records = @(Get-JournalRecords -SessionId $session)
+        Assert-Equal 2 $records.Count 'two journal entries'
+        Assert-Equal ([string]$records[0].pointer_digest) ([string]$records[1].pointer_digest) 'digest stable for identical text'
+        Assert-True ([string]$records[0].revision -cne [string]$records[1].revision) 'revision advanced'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 2 -PointerText "目标：戊`n下一步：己").ExitCode 'publish three'
+        $records = @(Get-JournalRecords -SessionId $session)
+        Assert-True ([string]$records[0].pointer_digest -cne [string]$records[2].pointer_digest) 'digest changes with text'
+        $g2 = (Read-State -SessionId $session).generation
+        Assert-True ($g1 -ceq $g2) 'publish keeps generation'
+    }
+
+    Invoke-Case '注入块在状态未变时逐字节稳定且不含易变字段' {
+        $session = 'context-stability'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'publish for context'
+        $first = Get-TPV2Context -StateRoot $script:StateRoot -SessionId $session -Source startup
+        Start-Sleep -Seconds 2
+        $second = Get-TPV2Context -StateRoot $script:StateRoot -SessionId $session -Source startup
+        Assert-True ($first -ceq $second) 'context drifted across identical reads'
+        foreach ($needle in @('POINTER_AGE_SECONDS', 'JOURNAL_ENTRIES', 'POINTER_BYTES', 'NOW')) {
+            Assert-True (-not $first.Contains($needle)) "volatile field $needle leaked into context"
+        }
+    }
+
+    Invoke-Case 'CAS 上下文带回目标状态、代际与 revision' {
+        $session = 'cas-context'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'publish before cas'
+        $state = Read-State -SessionId $session
+        $text = Format-TPV2CasContext -SessionId $session -Status 'DIRTY' -Generation (Get-TPV2Generation $state) -Revision 7
+        Assert-True $text.Contains("[TASK_POINTER_V2_CAS]") 'cas marker'
+        Assert-True $text.Contains("GENERATION=$(Get-TPV2Generation $state)") 'cas generation'
+        Assert-True $text.Contains('REVISION=7') 'cas revision'
+        Assert-True $text.Contains('STATUS=DIRTY') 'cas status'
+        Assert-True $text.Contains("SESSION_ID=$session") 'cas session'
+        Assert-True ($text.Contains('REQUEST_SCHEMA=3')) 'cas request schema'
+        Assert-True ($text.Contains('NEXT_ACTION=')) 'cas next action'
+        Assert-True (-not $text.Contains('POINTER_TEXT=')) 'cas must not inline pointer text'
+    }
+
+    Invoke-Case 'journal 缺失不是致命错误' {
+        $session = 'journal-missing'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'publish to seed journal'
+        Remove-Item -LiteralPath (Get-JournalPath -SessionId $session) -Force
+        $summary = Get-TPV2JournalSummary -StateRoot $script:StateRoot -SessionId $session
+        # 日志整体缺失只是"未知"，不是"缺口"：只有可见记录之间不连续才算缺口。
+        Assert-Equal 0 $summary.entry_count 'missing journal entry count'
+        Assert-Equal 0 $summary.invalid_lines 'missing journal invalid lines'
+        Assert-Equal 0 $summary.identical_text_streak 'missing journal streak'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 1 -PointerText "目标：庚`n下一步：辛").ExitCode 'publish after removal'
+        Assert-Equal 1 (@(Get-JournalRecords -SessionId $session)).Count 'journal is recreated'
+    }
+
+    Invoke-Case 'journal 追加失败不阻塞发布' {
+        $session = 'journal-append-failure'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'publish to seed journal'
+        $journal = Get-JournalPath -SessionId $session
+        Remove-Item -LiteralPath $journal -Force
+        # 用同名目录占位：追加必然失败，而 state.json 的写入路径不受影响。
+        New-Item -ItemType Directory -Path $journal -Force | Out-Null
+        $result = Publish-Clean -SessionId $session -ExpectedRevision 1 -PointerText "目标：追加`n下一步：失败"
+        Assert-Equal 0 $result.ExitCode ('publish survives journal failure :: ' + $result.Text)
+        $receipt = $result.Text | ConvertFrom-Json -AsHashtable -DateKind String
+        Assert-True ([bool]$receipt.ok) 'publish ok despite journal failure'
+        Assert-True (-not [bool]$receipt.journal_appended) 'receipt reports journal failure'
+        Assert-Equal 'JOURNAL_APPEND_FAILED' ([string]$receipt.journal_error) 'journal error code'
+        Assert-Equal 'CLEAN' ([string](Read-State -SessionId $session).status) 'state still advanced'
+    }
+
+    Invoke-Case 'journal 损坏行被跳过而不中断' {
+        $session = 'journal-corrupt'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'seed journal'
+        Add-Content -LiteralPath (Get-JournalPath -SessionId $session) -Value 'this is not json' -Encoding utf8
+        $summary = Get-TPV2JournalSummary -StateRoot $script:StateRoot -SessionId $session
+        Assert-Equal 1 $summary.invalid_lines 'invalid line count'
+        Assert-Equal 1 $summary.entry_count 'valid entries still counted'
+    }
+
+    Invoke-Case 'journal 超过体积上限时截断保留最近记录' {
+        $session = 'journal-cap'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'seed journal for cap'
+        $path = Get-JournalPath -SessionId $session
+        $filler = '{"event":"PUBLISH","journal_version":1,"session_id":"' + $session + '","revision":1,"generation":"g-' + ('0' * 32) + '","status":"CLEAN","task_id":"","pointer_digest":"' + ('0' * 64) + '","pointer_byte_count":0,"previous_revision":0,"previous_status":"ABSENT","recorded_at":"2026-01-01T00:00:00Z"}'
+        $lines = [System.Collections.Generic.List[string]]::new()
+        for ($i = 0; $i -lt 2000; $i++) { $lines.Add($filler) }
+        [IO.File]::WriteAllLines($path, $lines, $script:Utf8)
+        Assert-True ((Get-Item -LiteralPath $path).Length -gt 512000) 'filler exceeds cap'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 1 -PointerText "目标：壬`n下一步：癸").ExitCode 'publish over cap'
+        $records = @(Get-JournalRecords -SessionId $session)
+        Assert-True ($records.Count -le 101) "post-cap entry count $($records.Count)"
+        Assert-True ($records.Count -ge 100) "post-cap entry count $($records.Count)"
+        $last = Get-JournalLast -SessionId $session
+        Assert-True ((Get-TPV2JournalSummary -StateRoot $script:StateRoot -SessionId $session).entry_count -ge 99) 'summary after cap'
+    }
+
+    Invoke-Case 'no-op 守卫不递增 revision 也不改写 state.json' {
+        $session = 'noop-turn'
+        $pointer = "目标：癸`n下一步：甲"
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0 -PointerText $pointer).ExitCode 'publish pointer'
+        $first = Invoke-Lifecycle -Event (New-Event -Name UserPromptSubmit -SessionId $session)
+        Assert-Equal 0 $first.ExitCode 'first prompt'
+        $before = [IO.File]::ReadAllText((Get-StatePath $session), $script:Utf8)
+        $marker = [regex]::Match($before, '"revision":(\d+)').Groups[1].Value
+        Start-Sleep -Seconds 1
+        $second = Invoke-Lifecycle -Event (New-Event -Name UserPromptSubmit -SessionId $session)
+        $third = Invoke-Lifecycle -Event (New-Event -Name UserPromptSubmit -SessionId $session)
+        Assert-Equal 0 $second.ExitCode 'second prompt'
+        Assert-Equal 0 $third.ExitCode 'third prompt'
+        $after = [IO.File]::ReadAllText((Get-StatePath $session), $script:Utf8)
+        Assert-True ($before -ceq $after) 'no-op turns rewrote state.json'
+        Assert-Equal $marker ([regex]::Match($after, '"revision":(\d+)').Groups[1].Value) 'no-op turns advanced revision'
+        Assert-Equal 2 (@(Get-JournalRecords -SessionId $session)).Count 'journal entry count after no-op turns'
+        Assert-True ((Get-TPV2JournalSummary -StateRoot $script:StateRoot -SessionId $session).identical_text_streak -ge 2) 'identical text streak'
+    }
+
+    Invoke-Case '重复发布相同正文被记为原地踏步' {
+        $session = 'noop-repeat'
+        $pointer = "目标：原地`n下一步：踏步"
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0 -PointerText $pointer).ExitCode 'publish one'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 1 -PointerText $pointer).ExitCode 'publish two'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 2 -PointerText $pointer).ExitCode 'publish three'
+        $summary = Get-TPV2JournalSummary -StateRoot $script:StateRoot -SessionId $session
+        Assert-Equal 3 $summary.entry_count 'repeat entry count'
+        Assert-Equal 3 $summary.identical_text_streak 'repeat streak'
+    }
+
+    Invoke-Case '清除指针时 journal 保留墓碑并轮换代际' {
+        $session = 'journal-tombstone'
+        $pointer = "目标：墓碑`n下一步：保留"
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0 -PointerText $pointer).ExitCode 'publish before tombstone'
+        $before = Get-JournalLast -SessionId $session
+        $generation = (Read-State -SessionId $session).generation
+        $cleared = Invoke-Lifecycle -Event (New-Event -Name SessionStart -SessionId $session -Variant clear)
+        Assert-Equal 0 $cleared.ExitCode 'clear session start'
+        $after = Get-JournalLast -SessionId $session
+        Assert-Equal 'CLEARED' $after.event 'tombstone event'
+        Assert-Equal '11111111-1111-4111-8111-111111111111' $after.task_id 'tombstone task id'
+        Assert-Equal ([string]$before.pointer_digest) ([string]$after.pointer_digest) 'tombstone keeps digest'
+        $rotated = (Read-State -SessionId $session).generation
+        Assert-True ($generation -cne $rotated) 'clear rotates generation'
+    }
+
+    Invoke-Case 'report 入口输出诊断且不写盘' {
+        $session = 'report-entry'
+        Assert-Equal 0 (Publish-Clean -SessionId $session -ExpectedRevision 0).ExitCode 'publish for report'
+        $lines = @(& pwsh -NonInteractive -NoProfile -File $script:Report -StateRoot $script:StateRoot -SessionId $session 2>&1)
+        Assert-Equal 0 $LASTEXITCODE 'report exit code'
+        $text = ($lines -join "`n")
+        Assert-True $text.Contains('[TASK_POINTER_V2_REPORT]') 'report marker'
+        Assert-True $text.Contains("SESSION_ID=$session") 'report session'
+        Assert-True $text.Contains('STATE=CLEAN') 'report state'
+        Assert-True ($text.Contains('JOURNAL_ENTRIES=1')) 'report journal entries'
+        $missing = @(& pwsh -NonInteractive -NoProfile -File $script:Report -StateRoot $script:StateRoot -SessionId 'report-never-seen' 2>&1)
+        Assert-Equal 0 $LASTEXITCODE 'report exit code for absent session'
+        Assert-True (($missing -join "`n").Contains('STATE=ABSENT')) 'report absent state'
     }
 }
 finally {

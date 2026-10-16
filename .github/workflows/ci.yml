@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    # 本仓库的运行时、安装器与测试都是 Windows + PowerShell 7 专属：
+    # state 根解析依赖 Windows 卷与路径语义，安装器面向 Windows。
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show PowerShell version
+        shell: pwsh
+        run: $PSVersionTable.PSVersion.ToString()
+
+      - name: Run gates
+        shell: pwsh
+        # -SkipAppServer：app-server 检查需要真实模型认证，且要求人工信任 Hook，
+        # CI 上不可得；其余门（含脱敏 allowlist）必须全绿。
+        run: |
+          $receipt = Join-Path $env:RUNNER_TEMP 'task-pointer-receipt.json'
+          & pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer -ReceiptPath $receipt
+          $exit = $LASTEXITCODE
+          if (Test-Path -LiteralPath $receipt) {
+            $verdict = (Get-Content -LiteralPath $receipt -Raw -Encoding utf8 | ConvertFrom-Json).verdict
+            Write-Host "verdict=$verdict"
+            if ($verdict -ne 'PASS') { exit 1 }
+          }
+          exit $exit

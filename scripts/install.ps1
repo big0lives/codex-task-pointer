@@ -14,6 +14,7 @@ $script:OwnedCopies = @(
     [ordered]@{ source = 'src\task-pointer-store.ps1'; destination = 'src\task-pointer-store.ps1' },
     [ordered]@{ source = 'src\task-pointer-lifecycle.ps1'; destination = 'src\task-pointer-lifecycle.ps1' },
     [ordered]@{ source = 'src\task-pointer-publish.ps1'; destination = 'src\task-pointer-publish.ps1' },
+    [ordered]@{ source = 'src\task-pointer-report.ps1'; destination = 'src\task-pointer-report.ps1' },
     [ordered]@{ source = 'scripts\migrate-v1-to-v3.ps1'; destination = 'scripts\migrate-v1-to-v3.ps1' },
     [ordered]@{ source = 'schemas\state-v3.schema.json'; destination = 'schemas\state-v3.schema.json' },
     [ordered]@{ source = 'schemas\publish-request-v3.schema.json'; destination = 'schemas\publish-request-v3.schema.json' },

@@ -9,7 +9,7 @@
 
 ## 1. 你要部署什么
 
-Task Pointer 是独立的本地任务指针运行时：把当前任务的最小恢复指针存为受 schema 约束的 `state.json`，再通过根 Hook 在新会话、压缩和用户提示之间恢复上下文。安装只做三件事：
+Task Pointer 是独立的本地任务指针运行时：把当前任务的最小恢复指针存为受 schema 约束的 `state.json`，在同一目录维护一份只追加、只存元数据的 `journal.jsonl`（每次发布与清除一条记录，正文不入日志），再通过根 Hook 在新会话、压缩和用户提示之间恢复上下文。安装只做三件事：
 
 1. 复制运行时到 `<HOME>\task-pointer\`（src、schemas、scripts、hooks.example）；
 2. 向 `<HOME>\hooks.json` 合并 `PreCompact`、`SessionStart`、`UserPromptSubmit` 三个事件（既有其他 Hook 原样保留）；
@@ -116,6 +116,17 @@ node .\tests\app-server-hooks-list.mjs ... --app-server-command '"<真实路径>
 ```powershell
 pwsh -NoProfile -File .\tests\run-all.ps1 -SkipAppServer
 # 期望 receipt：verdict=PASS，app-server 两项为 SKIP
+```
+
+### 6.4 只读状态与日志诊断（自主执行）
+
+排查"指针是不是旧的、有没有被清掉"时用运行时自带的报告入口，它不写 state、不追加日志：
+
+```powershell
+pwsh -NoProfile -File <HOME>\task-pointer\src\task-pointer-report.ps1 `
+  -SessionId <session-id> -StateRoot <HOME>\state\task-pointers\v2
+# -Recall 检索历史发布记录；历史正文只在该 revision 仍等于当前 state 时可用，
+# 否则返回 POINTER_TEXT=RECALL_TEXT_UNAVAILABLE（日志按设计不存正文）
 ```
 
 ## 7. 回滚
